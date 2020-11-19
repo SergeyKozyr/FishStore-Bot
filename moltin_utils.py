@@ -3,10 +3,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from textwrap import dedent
 
 
-def get_access_token(client_id):
+def get_access_token(client_id, client_secret):
     data = {
         'client_id': client_id,
-        'grant_type': 'implicit'
+        'client_secret': client_secret,
+        'grant_type': 'client_credentials'
     }
     response = requests.post('https://api.moltin.com/oauth/access_token', data=data)
     response.raise_for_status()
@@ -83,8 +84,8 @@ def get_cart_reply(access_token, cart_id):
     keyboard = [[InlineKeyboardButton(f'Убрать {product["name"]}', callback_data=product['id'])] for product in cart_items]
     keyboard.extend(
         [
+            [InlineKeyboardButton('Оплатить', callback_data='pay')],
             [InlineKeyboardButton('В меню', callback_data='menu')],
-            [InlineKeyboardButton('Оплатить', callback_data='pay')]
         ]
     )
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -110,3 +111,24 @@ def remove_from_cart(access_token, cart_id, product_id):
     }
     response = requests.delete(f'https://api.moltin.com/v2/carts/{cart_id}/items/{product_id}', headers=headers)
     response.raise_for_status()
+
+
+def create_customer(access_token, name, email):
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+    }
+
+    data = {
+        "data": {
+            "type": "customer",
+            "name": name,
+            "email": email,
+        }
+    }
+
+    response = requests.post('https://api.moltin.com/v2/customers', headers=headers, json=data)
+    response.raise_for_status()
+    customer = response.json()['data']
+
+    return customer['id']

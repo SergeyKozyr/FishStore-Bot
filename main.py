@@ -3,8 +3,8 @@ import os
 import logging
 import redis
 from moltin_utils import (get_menu, get_access_token, get_all_products,
-                          add_to_cart, remove_from_cart, get_cart_reply
-                          )
+                          add_to_cart, remove_from_cart, get_cart_reply,
+                          create_customer)
 from dotenv import load_dotenv
 from functools import partial
 from textwrap import dedent
@@ -121,6 +121,10 @@ def handle_cart(bot, update):
 
         return 'HANDLE_MENU'
 
+    elif query.data == 'pay':
+        query.message.reply_text('Для оформления заказа, введите свой адрес электронной почты')
+        return 'WAITING_EMAIL'
+
     else:
         product_id = query.data
         remove_from_cart(access_token, chat_id, product_id)
@@ -129,6 +133,22 @@ def handle_cart(bot, update):
         query.message.reply_text(cart_reply, reply_markup=reply_markup)
 
         return 'HANDLE_CART'
+
+
+def handle_email(bot, update):
+    access_token = get_moltin_token()
+
+    user = update.message.from_user
+    chat_id = user.id
+    name = user.username if user.username else user.first_name
+    email = update.message.text
+
+    bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+    update.message.reply_text(f'Заказ будет оформлен на почту: {email}')
+
+    create_customer(access_token, name, email)
+
+    return 'START'
 
 
 def error(bot, update, error):
@@ -156,6 +176,7 @@ def handle_users_reply(bot, update):
         'HANDLE_MENU': handle_menu,
         'HANDLE_DESCRIPTION': handle_description,
         'HANDLE_CART': handle_cart,
+        'WAITING_EMAIL': handle_email
     }
     state_handler = states_functions[user_state]
 
@@ -175,8 +196,9 @@ if __name__ == '__main__':
     db_port = os.getenv('REDIS_PORT')
     db_password = os.getenv('REDIS_PASSWORD')
     moltin_client_id = os.getenv('MOLTIN_CLIENT_ID')
+    moltin_client_secret = os.getenv('MOLTIN_CLIENT_SECRET')
 
-    get_moltin_token = partial(get_access_token, moltin_client_id)
+    get_moltin_token = partial(get_access_token, moltin_client_id, moltin_client_secret)
 
     db = redis.Redis(host=db_host, port=db_port, password=db_password)
 
