@@ -2,16 +2,19 @@ import requests
 import os
 import logging
 import redis
-from moltin_utils import (get_menu, get_access_token, get_all_products,
-                          add_to_cart, remove_from_cart, get_cart_reply,
-                          create_customer)
+import time
+
 from dotenv import load_dotenv
 from functools import partial
 from textwrap import dedent
 
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Filters, Updater
 from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler
+
+from moltin_utils import (MyLogsHandler, get_menu, get_access_token, get_all_products,
+                          add_to_cart, remove_from_cart, get_cart_reply,
+                          create_customer)
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +24,7 @@ def start(bot, update):
     access_token = get_moltin_token()
     products = get_all_products(access_token)
     menu = get_menu(products)
-    menu.append([InlineKeyboardButton('Корзина', callback_data='cart')])
+    menu.append([InlineKeyboardButton('Cart', callback_data='cart')])
     reply_markup = InlineKeyboardMarkup(menu)
 
     if update.message:
@@ -63,23 +66,22 @@ def handle_menu(bot, update):
         product_image = response.json()['data']['link']['href']
 
         keyboard = [
-            [InlineKeyboardButton('1 кг', callback_data=f'{product_id}:1'),
-             InlineKeyboardButton('5 кг', callback_data=f'{product_id}:5'),
-             InlineKeyboardButton('10 кг', callback_data=f'{product_id}:10')],
-            [InlineKeyboardButton('Назад', callback_data='back')],
-            [InlineKeyboardButton('Корзина', callback_data='cart')]
+            [InlineKeyboardButton('1 kg', callback_data=f'{product_id}:1'),
+             InlineKeyboardButton('5 kg', callback_data=f'{product_id}:5'),
+             InlineKeyboardButton('10 kg', callback_data=f'{product_id}:10')],
+            [InlineKeyboardButton('Back to menu', callback_data='menu')],
+            [InlineKeyboardButton('Cart', callback_data='cart')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        bot.send_photo(chat_id=chat_id, photo=product_image, reply_markup=reply_markup, caption=dedent(
-            f'''
+        bot.send_photo(chat_id=chat_id, photo=product_image, reply_markup=reply_markup, caption=dedent(f'''
+
             {product_name}
 
             {product_price} per kg
             {product_stock} kg in stock
 
-            {product_description}
-            ''')
-        )
+            {product_description} ''')
+                       )
 
         return 'HANDLE_DESCRIPTION'
 
@@ -89,7 +91,7 @@ def handle_description(bot, update):
     chat_id = query.from_user.id
     access_token = get_moltin_token()
 
-    if query.data == 'back':
+    if query.data == 'menu':
         bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
         start(bot, update)
 
@@ -122,7 +124,8 @@ def handle_cart(bot, update):
         return 'HANDLE_MENU'
 
     elif query.data == 'pay':
-        query.message.reply_text('Для оформления заказа, введите свой адрес электронной почты')
+        bot.send_message(chat_id=chat_id, text='Please, send your e-mail address')
+
         return 'WAITING_EMAIL'
 
     else:
@@ -137,18 +140,20 @@ def handle_cart(bot, update):
 
 def handle_email(bot, update):
     access_token = get_moltin_token()
-
     user = update.message.from_user
     chat_id = user.id
     name = user.username if user.username else user.first_name
     email = update.message.text
 
-    bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-    update.message.reply_text(f'Заказ будет оформлен на почту: {email}')
+    keyboard = [[InlineKeyboardButton('Back to menu', callback_data='menu')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    bot.delete_message(chat_id=chat_id, message_id=update.message.message_id - 1)
+    update.message.reply_text(f'An order was created for: {email}', reply_markup=reply_markup)
 
     create_customer(access_token, name, email)
 
-    return 'START'
+    return 'HANDLE_CART'
 
 
 def error(bot, update, error):
@@ -178,31 +183,33 @@ def handle_users_reply(bot, update):
         'HANDLE_CART': handle_cart,
         'WAITING_EMAIL': handle_email
     }
+
     state_handler = states_functions[user_state]
-
-    try:
-        next_state = state_handler(bot, update)
-        db.set(chat_id, next_state)
-
-    except Exception:
-        logger.exception('Бот FishStore упал с ошибкой:')
+    next_state = state_handler(bot, update)
+    db.set(chat_id, next_state)
 
 
 if __name__ == '__main__':
 
     load_dotenv()
     fish_shop_bot_token = os.getenv('TG_FISHSTORE_BOT_TOKEN')
+    tg_logging_bot_token = os.getenv('TG_LOGGING_BOT_TOKEN')
+    chat_id = os.getenv('TG_CHAT_ID')
     db_host = os.getenv('REDIS_HOST')
     db_port = os.getenv('REDIS_PORT')
     db_password = os.getenv('REDIS_PASSWORD')
     moltin_client_id = os.getenv('MOLTIN_CLIENT_ID')
     moltin_client_secret = os.getenv('MOLTIN_CLIENT_SECRET')
 
+    logging_bot = Bot(token=tg_logging_bot_token)
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(MyLogsHandler(logging_bot, chat_id))
+    logger.info('Бот FishStore запущен')
+
     get_moltin_token = partial(get_access_token, moltin_client_id, moltin_client_secret)
 
     db = redis.Redis(host=db_host, port=db_port, password=db_password)
-
-    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
     updater = Updater(fish_shop_bot_token)
     dispatcher = updater.dispatcher
@@ -211,6 +218,11 @@ if __name__ == '__main__':
     dispatcher.add_handler(CommandHandler('start', handle_users_reply))
     dispatcher.add_error_handler(error)
 
-    updater.start_polling()
+    while True:
+        try:
+            updater.start_polling()
+            updater.idle()
 
-    updater.idle()
+        except Exception:
+            logger.exception('Бот FishStore упал с ошибкой:')
+            time.sleep(10)
