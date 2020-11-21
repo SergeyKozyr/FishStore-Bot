@@ -1,6 +1,6 @@
 ## Description
 
-Telegram bot for e-commerce, that integrates with CMS, using ![ElasticPath API](https://documentation.elasticpath.com/commerce-cloud/docs/api/index.html).
+Telegram bot for e-commerce, that integrates with CMS, using [ElasticPath API](https://documentation.elasticpath.com/commerce-cloud/docs/api/index.html).
 
 This bot can:
 - List all the wares
@@ -15,7 +15,7 @@ Each bot's logs are sent to Logging bot via telegram.
 
 Start the dialog with this [Telegram bot](https://t.me/FishStoreBot).
 
-![Telegram bot]()
+![Telegram bot](https://raw.githubusercontent.com/SergeyKozyr/FishStore-Bot/media/tg-bot.gif)
 
 ## How to install
 
@@ -46,7 +46,7 @@ Install dependencies.
 
 Run the script, send a message to the bot.
 
-`python tg-bot.py`
+`python main.py`
 
 ---
 
