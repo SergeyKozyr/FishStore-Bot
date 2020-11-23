@@ -9,31 +9,36 @@ from functools import partial
 from textwrap import dedent
 
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Filters, Updater
-from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler
+from telegram.ext import Filters, Updater, CallbackQueryHandler, CommandHandler, MessageHandler
 
-from moltin_utils import (MyLogsHandler, get_menu, get_access_token, get_all_products,
-                          add_to_cart, remove_from_cart, get_cart_reply,
-                          create_customer)
+from moltin import (get_access_token, get_all_products, add_to_cart,
+                    remove_from_cart, create_customer)
+from telegram_bot_tools import TelegramLogsHandler, get_menu, get_cart_reply
 
 
 logger = logging.getLogger(__name__)
 
 
-def start(bot, update):
-    access_token = get_moltin_token()
+def display_menu(bot, update):
+    if update.message:
+        message = update.message
+        chat_id = message.from_user.id
+
+    elif update.callback_query:
+        message = update.callback_query.message
+        chat_id = update.callback_query.from_user.id
+
+    if not db.get(f'{chat_id}-token'):
+        access_token = get_moltin_token()
+        db.set(f'{chat_id}-token', access_token, ex=3600)
+
+    access_token = db.get(f'{chat_id}-token')
     products = get_all_products(access_token)
     menu = get_menu(products)
     menu.append([InlineKeyboardButton('Cart', callback_data='cart')])
     reply_markup = InlineKeyboardMarkup(menu)
 
-    if update.message:
-        update.message.reply_text('Please choose:', reply_markup=reply_markup)
-
-    elif update.callback_query:
-        query = update.callback_query
-        chat_id = query.from_user.id
-        bot.send_message(chat_id=chat_id, reply_markup=reply_markup, text='Please choose:')
+    message.reply_text('Please choose:', reply_markup=reply_markup)
 
     return 'HANDLE_MENU'
 
@@ -41,12 +46,17 @@ def start(bot, update):
 def handle_menu(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
-    access_token = get_moltin_token()
-    bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+
+    if not db.get(f'{chat_id}-token'):
+        access_token = get_moltin_token()
+        db.set(f'{chat_id}-token', access_token, ex=3600)
+
+    access_token = db.get(f'{chat_id}-token')
 
     if query.data == 'cart':
         cart_reply, reply_markup = get_cart_reply(access_token, chat_id)
         query.message.reply_text(cart_reply, reply_markup=reply_markup)
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'HANDLE_CART'
 
@@ -83,24 +93,31 @@ def handle_menu(bot, update):
             {product_description} ''')
                        )
 
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+
         return 'HANDLE_DESCRIPTION'
 
 
 def handle_description(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
-    access_token = get_moltin_token()
+
+    if not db.get(f'{chat_id}-token'):
+        access_token = get_moltin_token()
+        db.set(f'{chat_id}-token', access_token, ex=3600)
+
+    access_token = db.get(f'{chat_id}-token')
 
     if query.data == 'menu':
+        display_menu(bot, update)
         bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
-        start(bot, update)
 
         return 'HANDLE_MENU'
 
     elif query.data == 'cart':
-        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
         cart_reply, reply_markup = get_cart_reply(access_token, chat_id)
         query.message.reply_text(cart_reply, reply_markup=reply_markup)
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'HANDLE_CART'
 
@@ -115,16 +132,22 @@ def handle_description(bot, update):
 def handle_cart(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
-    access_token = get_moltin_token()
-    bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+
+    if not db.get(f'{chat_id}-token'):
+        access_token = get_moltin_token()
+        db.set(f'{chat_id}-token', access_token, ex=3600)
+
+    access_token = db.get(f'{chat_id}-token')
 
     if query.data == 'menu':
-        start(bot, update)
+        display_menu(bot, update)
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'HANDLE_MENU'
 
     elif query.data == 'pay':
         bot.send_message(chat_id=chat_id, text='Please, send your e-mail address')
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'WAITING_EMAIL'
 
@@ -134,22 +157,29 @@ def handle_cart(bot, update):
         query.answer('Product has been removed from your cart!')
         cart_reply, reply_markup = get_cart_reply(access_token, chat_id)
         query.message.reply_text(cart_reply, reply_markup=reply_markup)
+        bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'HANDLE_CART'
 
 
 def handle_email(bot, update):
-    access_token = get_moltin_token()
     user = update.message.from_user
     chat_id = user.id
+
+    if not db.get(f'{chat_id}-token'):
+        access_token = get_moltin_token()
+        db.set(f'{chat_id}-token', access_token, ex=3600)
+
+    access_token = db.get(f'{chat_id}-token')
+
     name = user.username if user.username else user.first_name
     email = update.message.text
 
     keyboard = [[InlineKeyboardButton('Back to menu', callback_data='menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    bot.delete_message(chat_id=chat_id, message_id=update.message.message_id - 1)
     update.message.reply_text(f'An order was created for: {email}', reply_markup=reply_markup)
+    bot.delete_message(chat_id=chat_id, message_id=update.message.message_id - 1)
 
     create_customer(access_token, name, email)
 
@@ -172,12 +202,12 @@ def handle_users_reply(bot, update):
         return
 
     if user_reply == '/start':
-        user_state = 'START'
+        user_state = 'DISPLAYING_MENU'
     else:
-        user_state = db.get(chat_id).decode()
+        user_state = db.get(chat_id)
 
     states_functions = {
-        'START': start,
+        'DISPLAYING_MENU': display_menu,
         'HANDLE_MENU': handle_menu,
         'HANDLE_DESCRIPTION': handle_description,
         'HANDLE_CART': handle_cart,
@@ -204,12 +234,12 @@ if __name__ == '__main__':
     logging_bot = Bot(token=tg_logging_bot_token)
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
     logger.setLevel(logging.INFO)
-    logger.addHandler(MyLogsHandler(logging_bot, chat_id))
+    logger.addHandler(TelegramLogsHandler(logging_bot, chat_id))
     logger.info('Бот FishStore запущен')
 
     get_moltin_token = partial(get_access_token, moltin_client_id, moltin_client_secret)
 
-    db = redis.Redis(host=db_host, port=db_port, password=db_password)
+    db = redis.Redis(host=db_host, port=db_port, password=db_password, decode_responses=True)
 
     updater = Updater(fish_shop_bot_token)
     dispatcher = updater.dispatcher
