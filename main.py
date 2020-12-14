@@ -1,4 +1,3 @@
-import requests
 import os
 import logging
 import redis
@@ -6,13 +5,13 @@ import time
 
 from dotenv import load_dotenv
 from functools import partial
-from textwrap import dedent
 
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Filters, Updater, CallbackQueryHandler, CommandHandler, MessageHandler
+from telegram.ext import (Filters, Updater, CallbackQueryHandler,
+                          CommandHandler, MessageHandler)
 
-from moltin import (get_access_token, get_all_products, add_to_cart,
-                    remove_from_cart, create_customer)
+from moltin import (get_access_token, get_all_products, get_product_details,
+                    add_to_cart, remove_from_cart, create_customer)
 from telegram_bot_tools import TelegramLogsHandler, get_menu, get_cart_reply
 
 
@@ -28,11 +27,7 @@ def display_menu(bot, update):
         message = update.callback_query.message
         chat_id = update.callback_query.from_user.id
 
-    if not db.get(f'{chat_id}-token'):
-        access_token = get_moltin_token()
-        db.set(f'{chat_id}-token', access_token, ex=3600)
-
-    access_token = db.get(f'{chat_id}-token')
+    access_token = get_moltin_token(chat_id)
     products = get_all_products(access_token)
     menu = get_menu(products)
     menu.append([InlineKeyboardButton('Cart', callback_data='cart')])
@@ -47,11 +42,7 @@ def handle_menu(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
 
-    if not db.get(f'{chat_id}-token'):
-        access_token = get_moltin_token()
-        db.set(f'{chat_id}-token', access_token, ex=3600)
-
-    access_token = db.get(f'{chat_id}-token')
+    access_token = get_moltin_token(chat_id)
 
     if query.data == 'cart':
         cart_reply, reply_markup = get_cart_reply(access_token, chat_id)
@@ -62,18 +53,7 @@ def handle_menu(bot, update):
 
     else:
         product_id = query.data
-        response = requests.get(f'https://api.moltin.com/v2/products/{product_id}', headers={'Authorization': f'Bearer {access_token}'})
-        response.raise_for_status()
-        product = response.json()['data']
-        product_name = product['name']
-        product_price = product['meta']['display_price']['with_tax']['formatted']
-        product_stock = product['weight']['kg']
-        product_description = product['description']
-        product_image_id = product['relationships']['main_image']['data']['id']
-
-        response = requests.get(f'https://api.moltin.com/v2/files/{product_image_id}', headers={'Authorization': f'Bearer {access_token}'})
-        response.raise_for_status()
-        product_image = response.json()['data']['link']['href']
+        product_image, caption = get_product_details(access_token, product_id)
 
         keyboard = [
             [InlineKeyboardButton('1 kg', callback_data=f'{product_id}:1'),
@@ -83,16 +63,8 @@ def handle_menu(bot, update):
             [InlineKeyboardButton('Cart', callback_data='cart')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        bot.send_photo(chat_id=chat_id, photo=product_image, reply_markup=reply_markup, caption=dedent(f'''
 
-            {product_name}
-
-            {product_price} per kg
-            {product_stock} kg in stock
-
-            {product_description} ''')
-                       )
-
+        bot.send_photo(chat_id=chat_id, photo=product_image, reply_markup=reply_markup, caption=caption)
         bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
 
         return 'HANDLE_DESCRIPTION'
@@ -102,11 +74,7 @@ def handle_description(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
 
-    if not db.get(f'{chat_id}-token'):
-        access_token = get_moltin_token()
-        db.set(f'{chat_id}-token', access_token, ex=3600)
-
-    access_token = db.get(f'{chat_id}-token')
+    access_token = get_moltin_token(chat_id)
 
     if query.data == 'menu':
         display_menu(bot, update)
@@ -133,11 +101,7 @@ def handle_cart(bot, update):
     query = update.callback_query
     chat_id = query.from_user.id
 
-    if not db.get(f'{chat_id}-token'):
-        access_token = get_moltin_token()
-        db.set(f'{chat_id}-token', access_token, ex=3600)
-
-    access_token = db.get(f'{chat_id}-token')
+    access_token = get_moltin_token(chat_id)
 
     if query.data == 'menu':
         display_menu(bot, update)
@@ -166,11 +130,7 @@ def handle_email(bot, update):
     user = update.message.from_user
     chat_id = user.id
 
-    if not db.get(f'{chat_id}-token'):
-        access_token = get_moltin_token()
-        db.set(f'{chat_id}-token', access_token, ex=3600)
-
-    access_token = db.get(f'{chat_id}-token')
+    access_token = get_moltin_token(chat_id)
 
     name = user.username if user.username else user.first_name
     email = update.message.text
@@ -237,9 +197,9 @@ if __name__ == '__main__':
     logger.addHandler(TelegramLogsHandler(logging_bot, chat_id))
     logger.info('Бот FishStore запущен')
 
-    get_moltin_token = partial(get_access_token, moltin_client_id, moltin_client_secret)
-
     db = redis.Redis(host=db_host, port=db_port, password=db_password, decode_responses=True)
+
+    get_moltin_token = partial(get_access_token, moltin_client_id, moltin_client_secret, db)
 
     updater = Updater(fish_shop_bot_token)
     dispatcher = updater.dispatcher
